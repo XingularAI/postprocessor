@@ -122,6 +122,15 @@ class TestOcrWorkerPool(unittest.TestCase):
         
         pool.stop()
 
+    def test_stop_completes_within_timeout(self):
+        """pool.stop() must return promptly even when workers are idle."""
+        engine = LogitsOcrEngine(expected_logits_shape=(9, 37), char_map="0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ ")
+        pool = OcrWorkerPool(engine, worker_count=2)
+        start = time.time()
+        pool.stop(join_timeout=2.0)
+        elapsed = time.time() - start
+        self.assertLess(elapsed, 3.0, "stop() took too long — threads may not have exited")
+
 
 class TestDetectorMetadata(unittest.TestCase):
     def setUp(self):
@@ -190,6 +199,10 @@ class TestInferenceMessageFactory(unittest.TestCase):
         self.assertIsInstance(msg, AnprDetectorMessage)
 
 
+class MockExitSignal:
+    pass
+
+
 class TestMainLoop(unittest.TestCase):
     @unittest.skip(
         "Socket timeout test is sensitive to mock setup when run in suite; "
@@ -210,24 +223,42 @@ class TestMainLoop(unittest.TestCase):
             module.main(settings, engine)
 
     @patch('nxai_communication_utils.SocketListener')
-    def test_main_handles_send_error(self, mock_listener_cls):
+    def test_main_exits_on_exit_signal(self, mock_listener_cls):
+        """main() must break out of the loop cleanly when ExitSignal is received."""
+        mock_comm.ExitSignal = MockExitSignal
+        mock_comm.parseInferenceResults.return_value = MockExitSignal()
+
         mock_server = mock_listener_cls.return_value
         mock_conn = MagicMock()
-        mock_server.accept.return_value = (mock_conn, b"raw_data")
-        
-        # Mock message that raises error on send
+        mock_server.accept.return_value = (mock_conn, b"exit_data")
+
+        from message_processing_utils.general.ocr import load_ocr_config
+        settings = load_ocr_config(None, processor_name="anpr-example")
+        # main() should return normally (no exception, no infinite loop)
+        module.main(settings, MagicMock())
+
+        mock_conn.close.assert_called()
+
+    @patch('nxai_communication_utils.SocketListener')
+    def test_main_handles_send_error(self, mock_listener_cls):
+        # parseInferenceResults must not return ExitSignal so processing continues
+        mock_comm.parseInferenceResults.return_value = MagicMock(spec=[])
+        mock_comm.ExitSignal = MockExitSignal
+
+        mock_server = mock_listener_cls.return_value
+        mock_conn = MagicMock()
         mock_conn.send.side_effect = Exception("Send failed")
-        
+
         with patch.object(module, 'create_anpr_message_from_bytes') as mock_factory:
             mock_msg = MagicMock()
             mock_factory.return_value = mock_msg
             mock_server.accept.side_effect = [(mock_conn, b"data"), KeyboardInterrupt]
-            
+
             from message_processing_utils.general.ocr import load_ocr_config
             settings = load_ocr_config(None, processor_name="anpr-example")
             with self.assertRaises(KeyboardInterrupt):
                 module.main(settings, MagicMock())
-            
+
             mock_conn.close.assert_called()
 
 
