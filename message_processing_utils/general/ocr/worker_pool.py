@@ -27,13 +27,15 @@ class OcrWorkerPool:
     def submit(self, logits, on_done):
         self._queue.put((logits, on_done))
 
-    def stop(self):
+    def stop(self, join_timeout: float = 2.0):
         logger.info("Stopping OCR worker pool")
         self._stop_event.set()
         for _ in self._threads:
             self._queue.put(None)
         for thread in self._threads:
-            thread.join()
+            thread.join(timeout=join_timeout)
+            if thread.is_alive():
+                logger.warning("Worker thread %s did not stop within %.1fs", thread.name, join_timeout)
 
     def _worker_loop(self):
         logger.debug("OCR worker thread started")
