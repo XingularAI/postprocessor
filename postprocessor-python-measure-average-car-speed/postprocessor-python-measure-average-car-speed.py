@@ -186,6 +186,11 @@ def main(
             logger.error("Error accepting connection: %s", e, exc_info=True)
             continue
         logger.debug("Received input message")
+        input_object = nxai_communication_utils.parseInferenceResults(input_message)
+        if isinstance(input_object, nxai_communication_utils.ExitSignal):
+            logger.info("Received exit signal.")
+            connection.close()
+            break
         try:
             message = create_anpr_message_from_bytes(input_message)
         except Exception as e:
