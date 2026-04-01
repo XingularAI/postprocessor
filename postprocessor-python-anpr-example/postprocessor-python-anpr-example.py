@@ -58,6 +58,11 @@ def main(settings, engine, ocr_pool=None):
             # Request timed out. Continue waiting
             continue
         try:
+            input_object = nxai_communication_utils.parseInferenceResults(input_message)
+            if isinstance(input_object, nxai_communication_utils.ExitSignal):
+                logger.info("Received exit signal.")
+                connection.close()
+                break
             message = create_anpr_message_from_bytes(input_message)
             logger.debug("Processing message: %s", message.__class__.__name__)
             message.handle(ocr_cache)

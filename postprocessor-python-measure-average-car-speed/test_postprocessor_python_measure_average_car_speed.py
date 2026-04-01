@@ -30,10 +30,14 @@ class MockSocketTimeout(Exception):
 class MockSocketError(Exception):
     pass
 
+class MockExitSignal:
+    pass
+
 # Mock dependencies before importing the main module
 mock_comm = MagicMock()
 mock_comm.SocketTimeout = MockSocketTimeout
 mock_comm.SocketError = MockSocketError
+mock_comm.ExitSignal = MockExitSignal
 sys.modules['nxai_communication_utils'] = mock_comm
 sys.modules['msgpack'] = MagicMock()
 
@@ -271,9 +275,10 @@ class TestMergeSpeedSettings(unittest.TestCase):
 
 class TestMainFiltering(unittest.TestCase):
     """Tests for main() function - DeviceID filtering."""
-    
+
     def setUp(self):
         """Set up test fixtures."""
+        mock_comm.parseInferenceResults.return_value = MagicMock(spec=[])
         self.settings = {
             "socket_path": "/tmp/test.sock",
             "camera_1_id": "3645c7ee-ca91-e579-e753-1d85af1fd08c",
@@ -283,6 +288,20 @@ class TestMainFiltering(unittest.TestCase):
         }
         self.engine = MagicMock()
     
+    @patch('nxai_communication_utils.SocketListener')
+    def test_main_exits_on_exit_signal(self, mock_listener_cls):
+        """main() must break out of the loop cleanly when ExitSignal is received."""
+        mock_comm.parseInferenceResults.return_value = MockExitSignal()
+
+        mock_server = mock_listener_cls.return_value
+        mock_conn = MagicMock()
+        mock_server.accept.return_value = (mock_conn, b"exit_data")
+
+        # main() should return normally (no exception, no infinite loop)
+        module.main(self.settings, self.engine)
+
+        mock_conn.close.assert_called()
+
     @patch('nxai_communication_utils.SocketListener')
     def test_main_filters_by_device_id(self, mock_listener_cls):
         """Test that messages from unknown cameras are returned unchanged."""
@@ -379,9 +398,10 @@ class TestMainFiltering(unittest.TestCase):
 
 class TestMainSpeedCache(unittest.TestCase):
     """Tests for main() function - SpeedMeasurementCache integration."""
-    
+
     def setUp(self):
         """Set up test fixtures."""
+        mock_comm.parseInferenceResults.return_value = MagicMock(spec=[])
         self.settings = {
             "socket_path": "/tmp/test.sock",
             "camera_1_id": "3645c7ee-ca91-e579-e753-1d85af1fd08c",
@@ -572,9 +592,10 @@ class TestMainSpeedCache(unittest.TestCase):
 
 class TestMessageTypes(unittest.TestCase):
     """Tests for processing different message types."""
-    
+
     def setUp(self):
         """Set up test fixtures."""
+        mock_comm.parseInferenceResults.return_value = MagicMock(spec=[])
         self.settings = {
             "socket_path": "/tmp/test.sock",
             "camera_1_id": "3645c7ee-ca91-e579-e753-1d85af1fd08c",
