@@ -13,3 +13,7 @@ log_file = /tmp/postprocessor-anpr-example.log
 worker_count = 4
 # Name of the OCR model output tensor
 output_name = Identity:0
+
+[anpr]
+# Minimum OCR confidence (0.0–1.0) to emit a plate_recognized event
+min_confidence = 0.95

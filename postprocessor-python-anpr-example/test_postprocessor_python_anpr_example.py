@@ -51,7 +51,7 @@ with patch('logging.FileHandler') as _file_handler:
         GenericMessage,
         create_anpr_message_from_bytes,
     )
-    from message_processing_utils.anpr import AnprDetectorMessage, CctOcrMessage
+    from message_processing_utils.anpr import AnprDetectorMessage, CctOcrMessage, EventDeduplicationCache
     from message_processing_utils.general.detector.messages import DetectorMessage
     from message_processing_utils.general.ocr import (
         LogitsOcrEngine,
@@ -260,6 +260,144 @@ class TestMainLoop(unittest.TestCase):
                 module.main(settings, MagicMock())
 
             mock_conn.close.assert_called()
+
+
+class TestAnprEventGeneration(unittest.TestCase):
+    """Tests for confidence-gated, deduplicated event emission."""
+
+    def _make_detector_message(self, object_id):
+        return AnprDetectorMessage({
+            "BBoxes_xyxy": {"lp": [0, 0, 10, 10]},
+            "ObjectsMetaData": {"lp": {"ObjectIDs": [object_id]}},
+        })
+
+    def _make_ocr_cache(self, object_id, text, conf):
+        engine = MagicMock()
+        cache = OcrCache(engine, "Identity:0")
+        mock_msg = MagicMock()
+        mock_msg.original_object_id = object_id
+        cache.cache_ocr_result(mock_msg, text, conf)
+        return cache
+
+    def test_event_emitted_above_threshold(self):
+        object_id = "obj-1"
+        ocr_cache = self._make_ocr_cache(object_id, "ABC123", 0.97)
+        event_cache = EventDeduplicationCache()
+        settings = {"min_confidence": 0.95}
+
+        msg = self._make_detector_message(object_id)
+        msg.handle(ocr_cache)
+
+        import time as _time
+        ui_settings = {}
+        current = module._merge_anpr_settings(settings, ui_settings)
+        for oid in set(msg.object_ids):
+            cached = ocr_cache.get_cached_result(oid)
+            if cached and cached[1] >= current["min_confidence"]:
+                if event_cache.should_generate_event(oid, cached[0]):
+                    msg.add_event("anpr.plate_recognized", "License Plate Recognized",
+                                  cached[0])
+                    event_cache.mark_event_generated(oid, cached[0], _time.monotonic())
+
+        events = msg._message.get("Events", [])
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["ID"], "anpr.plate_recognized")
+        self.assertEqual(events[0]["Description"], "ABC123")
+
+    def test_no_event_below_threshold(self):
+        object_id = "obj-2"
+        ocr_cache = self._make_ocr_cache(object_id, "ABC123", 0.80)
+        event_cache = EventDeduplicationCache()
+        settings = {"min_confidence": 0.95}
+
+        msg = self._make_detector_message(object_id)
+        msg.handle(ocr_cache)
+
+        import time as _time
+        current = module._merge_anpr_settings(settings, {})
+        for oid in set(msg.object_ids):
+            cached = ocr_cache.get_cached_result(oid)
+            if cached and cached[1] >= current["min_confidence"]:
+                if event_cache.should_generate_event(oid, cached[0]):
+                    msg.add_event("anpr.plate_recognized", "License Plate Recognized",
+                                  cached[0])
+                    event_cache.mark_event_generated(oid, cached[0], _time.monotonic())
+
+        self.assertEqual(msg._message.get("Events", []), [])
+
+    def test_no_duplicate_event_same_object_same_text(self):
+        object_id = "obj-3"
+        ocr_cache = self._make_ocr_cache(object_id, "XYZ999", 0.99)
+        event_cache = EventDeduplicationCache()
+        settings = {"min_confidence": 0.95}
+
+        import time as _time
+
+        def _run_event_loop(msg):
+            current = module._merge_anpr_settings(settings, {})
+            for oid in set(msg.object_ids):
+                cached = ocr_cache.get_cached_result(oid)
+                if cached and cached[1] >= current["min_confidence"]:
+                    if event_cache.should_generate_event(oid, cached[0]):
+                        msg.add_event("anpr.plate_recognized", "License Plate Recognized",
+                                      cached[0])
+                        event_cache.mark_event_generated(oid, cached[0], _time.monotonic())
+
+        # First message — event should fire
+        msg1 = self._make_detector_message(object_id)
+        msg1.handle(ocr_cache)
+        _run_event_loop(msg1)
+        self.assertEqual(len(msg1._message.get("Events", [])), 1)
+
+        # Second message with same object/text — no event
+        msg2 = self._make_detector_message(object_id)
+        msg2.handle(ocr_cache)
+        _run_event_loop(msg2)
+        self.assertEqual(len(msg2._message.get("Events", [])), 0)
+
+    def test_new_event_when_plate_text_changes(self):
+        object_id = "obj-4"
+        engine = MagicMock()
+        ocr_cache = OcrCache(engine, "Identity:0")
+        event_cache = EventDeduplicationCache()
+        settings = {"min_confidence": 0.95}
+
+        import time as _time
+
+        def _cache_and_run(text, conf):
+            mock_msg = MagicMock()
+            mock_msg.original_object_id = object_id
+            ocr_cache.cache_ocr_result(mock_msg, text, conf)
+            msg = self._make_detector_message(object_id)
+            msg.handle(ocr_cache)
+            current = module._merge_anpr_settings(settings, {})
+            for oid in set(msg.object_ids):
+                cached = ocr_cache.get_cached_result(oid)
+                if cached and cached[1] >= current["min_confidence"]:
+                    if event_cache.should_generate_event(oid, cached[0]):
+                        msg.add_event("anpr.plate_recognized", "License Plate Recognized",
+                                      cached[0])
+                        event_cache.mark_event_generated(oid, cached[0], _time.monotonic())
+            return msg
+
+        msg1 = _cache_and_run("ABC123", 0.98)
+        self.assertEqual(len(msg1._message.get("Events", [])), 1)
+
+        msg2 = _cache_and_run("DEF456", 0.97)
+        self.assertEqual(len(msg2._message.get("Events", [])), 1)
+        self.assertIn("DEF456", msg2._message["Events"][0]["Description"])
+
+    def test_ui_override_min_confidence(self):
+        settings = {"min_confidence": 0.95}
+        ui_settings = {"externalprocessor.min_confidence": "0.50"}
+        result = module._merge_anpr_settings(settings, ui_settings)
+        self.assertAlmostEqual(result["min_confidence"], 0.50)
+
+    def test_ui_override_invalid_value_falls_back(self):
+        settings = {"min_confidence": 0.95}
+        ui_settings = {"externalprocessor.min_confidence": "not_a_float"}
+        result = module._merge_anpr_settings(settings, ui_settings)
+        self.assertAlmostEqual(result["min_confidence"], 0.95)
 
 
 if __name__ == '__main__':

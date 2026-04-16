@@ -2,7 +2,11 @@
 ANPR message processing (detector + OCR) and ANPR factory.
 """
 
-from message_processing_utils.anpr.detector import AnprDetectorMessage, SpeedDetectorMessage
+from message_processing_utils.anpr.detector import (
+    AnprDetectorMessage,
+    SpeedDetectorMessage,
+    EventDeduplicationCache,
+)
 from message_processing_utils.anpr.ocr import CctOcrMessage
 
 
@@ -33,6 +37,7 @@ def create_anpr_message_from_bytes(data: bytes):
 __all__ = [
     "AnprDetectorMessage",
     "SpeedDetectorMessage",
+    "EventDeduplicationCache",
     "CctOcrMessage",
     "create_anpr_message_from_bytes",
 ]

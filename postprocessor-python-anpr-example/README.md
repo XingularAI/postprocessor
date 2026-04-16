@@ -12,6 +12,7 @@ The postprocessor handles two types of messages in a high-performance asynchrono
 
 - **Asynchronous Processing**: Uses a worker pool for OCR decoding to prevent blocking the main communication loop.
 - **Caching Logic**: Implements an `OcrCache` to store recognition results, allowing immediate responses to detector messages with the most recent OCR data.
+- **Plate Recognized Event**: Emits an `anpr.plate_recognized` Analytics Event when a license plate is recognized with sufficient confidence. Duplicate recognitions for the same object track are suppressed via a TTL-based deduplication cache.
 - **Robust Configuration**: Optional INI at `../etc/plugin.anpr.ini`; first CLI argument is always the socket path (same as other postprocessors).
 - **Nuitka Integration**: Fully compatible with Nuitka for compiling into a high-performance standalone binary.
 
@@ -147,6 +148,8 @@ C:\Windows\System32\config\systemprofile\AppData\Local\Network Optix\Network Opt
 - `[ocr]`:
     - `worker_count`: Number of parallel threads for OCR decoding.
     - `output_name`: The name of the output tensor to extract from the inference result.
+- `[anpr]`:
+    - `min_confidence`: Minimum OCR confidence (0.0–1.0) required to emit a `plate_recognized` event. Default: `0.95`. Can also be overridden per-message via `ExternalProcessorSettings` (key: `anpr.min_confidence`).
 
 ## Message Flow and Formats
 
@@ -218,7 +221,13 @@ Add the postprocessor to `external_postprocessors.json`. Example full file conte
       "Name": "ANPR-Example",
       "Command": "/opt/networkoptix-metavms/mediaserver/var/nx_ai_manager/nxai_manager/postprocessors/postprocessor-python-anpr-example",
       "SocketPath": "/tmp/postprocessor-anpr-example.sock",
-      "ReceiveBinaryData": true
+      "ReceiveBinaryData": true,
+      "Events": [
+        {
+          "ID": "anpr.plate_recognized",
+          "Name": "Plate Recognized"
+        }
+      ]
     }
   ]
 }
@@ -232,11 +241,19 @@ Add the postprocessor to `external_postprocessors.json`. Example full file conte
       "Name": "ANPR-Example",
       "Command": "C:\\Windows\\System32\\config\\systemprofile\\AppData\\Local\\Network Optix\\Network Optix MetaVMS Media Server\\nx_ai_manager\\nxai_manager\\postprocessors\\postprocessor-python-anpr-example.exe",
       "SocketPath": "C:\\Windows\\SystemTemp\\postprocessor-anpr-example.sock",
-      "ReceiveBinaryData": true
+      "ReceiveBinaryData": true,
+      "Events": [
+        {
+          "ID": "anpr.plate_recognized",
+          "Name": "Plate Recognized"
+        }
+      ]
     }
   ]
 }
 ```
+
+**Note**: The `Events` array declares which Analytics Events this postprocessor can emit. Without it, `plate_recognized` will not appear in the Nx Client Analytics Events list and cannot be used in Camera Rules.
 
 **Note**: The shared library (`libnxai-c-utilities-shared.so` on Linux or `nxai-c-utilities-shared.dll` on Windows) must be in the same directory as the postprocessor binary. This is handled automatically by the installation process.
 
