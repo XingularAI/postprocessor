@@ -29,6 +29,7 @@ def load_ocr_config(config_path=None, processor_name="postprocessor"):
     # Add OCR-specific defaults
     settings["ocr_worker_count"] = max(1, min(4, os.cpu_count() or 1))
     settings["ocr_output_name"] = "Identity:0"
+    settings["cache_ttl_sec"] = 300.0
 
     if config_path is None:
         return settings
@@ -47,6 +48,9 @@ def load_ocr_config(config_path=None, processor_name="postprocessor"):
         )
         settings["ocr_output_name"] = configuration.get(
             "ocr", "output_name", fallback=settings["ocr_output_name"]
+        )
+        settings["cache_ttl_sec"] = configuration.getfloat(
+            "ocr", "cache_ttl_sec", fallback=settings["cache_ttl_sec"]
         )
 
     logger.debug("Read OCR configuration done")
