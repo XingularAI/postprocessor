@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls *)",
+      "Bash(ls)",
+      "Bash(find *)",
+      "Bash(grep *)",
+      "Bash(git status *)",
+      "Bash(git log *)",
+      "Bash(git diff *)",
+      "Bash(git branch *)",
+      "Bash(wc *)",
+      "Bash(python3 -c *)",
+      "Bash(python3 -m *)",
+      "Bash(cmake --build *)",
+      "Bash(cmake --install *)",
+      "Bash(cmake -D*)",
+      "Bash(cat *)"
+    ],
+    "deny": []
+  }
+}

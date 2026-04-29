@@ -11,11 +11,34 @@ if(WIN32)
         set(INSTALL_DEST_PREPROCESSORS "C:\\Windows\\System32\\config\\systemprofile\\AppData\\Local\\Network Optix\\Network Optix MetaVMS Media Server\\nx_ai_manager\\nxai_manager\\preprocessors" CACHE PATH "Installation destination for preprocessors")
     endif()
 else()
+    # Auto-detect NX VMS installation. Supports both networkoptix-metavms (NX Meta) and
+    # networkoptix (NX Witness). Override with:
+    #   cmake -DINSTALL_DEST_POSTPROCESSORS=<path> -DINSTALL_DEST_PREPROCESSORS=<path>
+    if(NOT DEFINED CACHE{INSTALL_DEST_POSTPROCESSORS} OR NOT DEFINED CACHE{INSTALL_DEST_PREPROCESSORS})
+        execute_process(COMMAND systemctl is-active networkoptix-metavms-mediaserver
+            OUTPUT_QUIET ERROR_QUIET RESULT_VARIABLE _nxmeta_active)
+        execute_process(COMMAND systemctl is-active networkoptix-mediaserver
+            OUTPUT_QUIET ERROR_QUIET RESULT_VARIABLE _nxwitness_active)
+
+        if(_nxmeta_active EQUAL 0)
+            set(_NX_BASE "/opt/networkoptix-metavms")
+        elseif(_nxwitness_active EQUAL 0)
+            set(_NX_BASE "/opt/networkoptix")
+        elseif(EXISTS "/opt/networkoptix-metavms/mediaserver/var/nx_ai_manager/")
+            set(_NX_BASE "/opt/networkoptix-metavms")
+        elseif(EXISTS "/opt/networkoptix/mediaserver/var/nx_ai_manager/")
+            set(_NX_BASE "/opt/networkoptix")
+        else()
+            set(_NX_BASE "/opt/networkoptix-metavms")
+        endif()
+        message(STATUS "NX VMS base detected: ${_NX_BASE}")
+    endif()
+
     if(NOT DEFINED CACHE{INSTALL_DEST_POSTPROCESSORS})
-        set(INSTALL_DEST_POSTPROCESSORS "/opt/networkoptix-metavms/mediaserver/var/nx_ai_manager/nxai_manager/postprocessors/" CACHE PATH "Installation destination for postprocessors")
+        set(INSTALL_DEST_POSTPROCESSORS "${_NX_BASE}/mediaserver/var/nx_ai_manager/nxai_manager/postprocessors/" CACHE PATH "Installation destination for postprocessors")
     endif()
     if(NOT DEFINED CACHE{INSTALL_DEST_PREPROCESSORS})
-        set(INSTALL_DEST_PREPROCESSORS "/opt/networkoptix-metavms/mediaserver/var/nx_ai_manager/nxai_manager/preprocessors/" CACHE PATH "Installation destination for preprocessors")
+        set(INSTALL_DEST_PREPROCESSORS "${_NX_BASE}/mediaserver/var/nx_ai_manager/nxai_manager/preprocessors/" CACHE PATH "Installation destination for preprocessors")
     endif()
 endif()
 
@@ -63,6 +86,9 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/postprocessor-python-measure-averag
 
 ## Add Postprocessor Python NoResponse project
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/postprocessor-python-noresponse-example)
+
+## Add EdgeImpulse Upload Postprocessor Python project
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/postprocessor-python-edgeimpulse-example)
 
 ## Add Cloud Inference Postprocessor Python project
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/postprocessor-cloud-inference-example)
