@@ -104,7 +104,7 @@ def setup_logging(level_str: str, log_file: str, processor_name: str = "postproc
         format=f"%(asctime)s - %(levelname)s - {processor_name} - %(message)s",
         handlers=[
             logging.StreamHandler(sys.stdout),
-            logging.FileHandler(log_file, mode="w")
+            logging.FileHandler(log_file, mode="a")
         ],
         force=True
     )
