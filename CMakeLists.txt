@@ -50,6 +50,8 @@ if(MSVC)
     link_libraries(ws2_32)
 endif()
 
+set(NUITKA_FLAGS "--onefile-tempdir-spec={TEMP}/onefile_{PROGRAM_BASE}")
+
 # Add Scailable C Utilities for all subprojects
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/nxai-utilities)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/nxai-utilities/include)
