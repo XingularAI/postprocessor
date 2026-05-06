@@ -383,7 +383,7 @@ class TestAnprEventGeneration(unittest.TestCase):
         msg1 = _cache_and_run("ABC123", 0.98)
         self.assertEqual(len(msg1._message.get("Events", [])), 1)
 
-        msg2 = _cache_and_run("DEF456", 0.97)
+        msg2 = _cache_and_run("DEF456", 0.99)
         self.assertEqual(len(msg2._message.get("Events", [])), 1)
         self.assertIn("DEF456", msg2._message["Events"][0]["Description"])
 
