@@ -96,6 +96,15 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/postprocessor-cloud-inference-examp
 # Add Clip Postprocessor Python project
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/postprocessor-python-clip-example)
 
+## Add Height Estimator Postprocessor Python project
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/postprocessor-python-height-estimator)
+
+## Add Object Counter Threshold Postprocessor Python project
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/postprocessor-python-object-counter-threshold)
+
+## Add Web Dashboard Postprocessor Python project
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/postprocessor-python-web-dashboard)
+
 # Add Image Preprocessor Python project
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/preprocessor-python-image-example)
 
