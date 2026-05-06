@@ -20,7 +20,9 @@ class OcrCache:
         if not message.original_object_id:
             return
         object_id = message.original_object_id
-        self._ocr_results_cache[object_id] = (recognized_text, confidence)
+        existing = self._ocr_results_cache.get(object_id)
+        if existing is None or confidence > existing[1]:
+            self._ocr_results_cache[object_id] = (recognized_text, confidence)
         self._ocr_timestamps[object_id] = time.monotonic()
 
     def get_cached_result(self, object_id: str):

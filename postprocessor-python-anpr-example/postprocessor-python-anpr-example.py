@@ -6,11 +6,14 @@ This example postprocessor receives OCR results from the CCT model (NxM float32 
 and converts them to readable text by finding argmax for each character position.
 """
 
+import atexit
+import configparser
+import hashlib
+import logging
 import os
+import signal
 import sys
 import time
-import logging
-import configparser
 
 # Add message_processing_utils package to path
 script_location = os.path.dirname(os.path.abspath(__file__))
@@ -84,6 +87,91 @@ def _merge_anpr_settings(settings, ui_settings):
     return result
 
 
+def _try_acquire_singleton_unix(socket_path):
+    """Return (True, lock_path) if locked; (False, lock_path) if another instance holds it."""
+    import fcntl
+    lock_path = socket_path + ".singleton.lock"
+    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o666)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        return False, lock_path
+
+    def _release():
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        except OSError:
+            pass
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+
+    atexit.register(_release)
+    return True, lock_path
+
+
+def _try_acquire_singleton_windows(socket_path):
+    """
+    Return (True, mutex_name) if this process owns the singleton mutex;
+    (False, mutex_name) if another instance already holds it.
+    """
+    import ctypes
+    from ctypes import wintypes
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    CreateMutexW = kernel32.CreateMutexW
+    CreateMutexW.argtypes = [wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR]
+    CreateMutexW.restype = wintypes.HANDLE
+    CloseHandle = kernel32.CloseHandle
+    CloseHandle.argtypes = [wintypes.HANDLE]
+    CloseHandle.restype = wintypes.BOOL
+    digest = hashlib.sha256(
+        socket_path.encode("utf-8", errors="surrogateescape")
+    ).hexdigest()[:32]
+    mutex_names = (
+        f"Global\\NxAiAnprPostprocessor-{digest}",
+        f"Local\\NxAiAnprPostprocessor-{digest}",
+    )
+    ERROR_ALREADY_EXISTS = 183
+    ERROR_ACCESS_DENIED = 5
+    last_err = 0
+    for mutex_name in mutex_names:
+        kernel32.SetLastError(0)
+        handle = CreateMutexW(None, False, mutex_name)
+        err = kernel32.GetLastError()
+        if not handle:
+            last_err = kernel32.GetLastError()
+            if last_err == ERROR_ACCESS_DENIED:
+                continue
+            raise OSError(last_err, f"CreateMutexW failed for {mutex_name!r}")
+        if err == ERROR_ALREADY_EXISTS:
+            CloseHandle(handle)
+            return False, mutex_name
+
+        def _release(h=handle):
+            CloseHandle(h)
+
+        atexit.register(_release)
+        return True, mutex_name
+    raise OSError(last_err, "CreateMutexW failed for all mutex name variants")
+
+
+def _try_acquire_postprocessor_singleton(socket_path):
+    """
+    Ensure at most one postprocessor listener per socket_path across processes.
+    Registers an atexit handler to release the lock on exit.
+    Returns (ok, description) where description is lock file path or mutex name.
+    Raises OSError on fatal errors (caller should log and exit non-zero).
+    """
+    if sys.platform == "win32":
+        return _try_acquire_singleton_windows(socket_path)
+    return _try_acquire_singleton_unix(socket_path)
+
+
 def main(settings, engine, ocr_pool=None, event_cache=None):
     """Main postprocessor loop"""
     logger.info("=== STARTING ANPR POSTPROCESSOR ===")
@@ -93,7 +181,6 @@ def main(settings, engine, ocr_pool=None, event_cache=None):
     # Add nxai_utilities to path
     if settings["nxai_utilities_path"] not in sys.path:
         sys.path.append(settings["nxai_utilities_path"])
-
     import nxai_communication_utils
     lib_path = get_nxai_utilities_library_path()
     if lib_path is not None:
@@ -173,17 +260,40 @@ if __name__ == "__main__":
     setup_logging(settings["log_level"], settings["log_file"], processor_name="anpr-example")
     if len(sys.argv) > 1:
         settings["socket_path"] = sys.argv[1]
+    try:
+        ok, lock_desc = _try_acquire_postprocessor_singleton(settings["socket_path"])
+    except OSError as exc:
+        logger.error("Singleton lock failed for socket %s: %s", settings["socket_path"], exc)
+        sys.exit(1)
+    if not ok:
+        logger.warning(
+            "Another ANPR postprocessor instance already holds %s; exiting so only "
+            "one listener uses %s.",
+            lock_desc,
+            settings["socket_path"],
+        )
+        sys.exit(0)
+    logger.info(
+        "Singleton lock acquired (pid=%s, lock=%s, socket=%s)",
+        os.getpid(),
+        lock_desc,
+        settings["socket_path"],
+    )
     logger.debug("Input parameters: %s", sys.argv)
     logger.info("Configuration loaded:")
     for key, val in settings.items():
         logger.info("  %s = %s", key, val)
-
     if settings["nxai_utilities_path"] not in sys.path:
         sys.path.append(settings["nxai_utilities_path"])
-
     import nxai_communication_utils
     logger.info(
         "nxai_communication_utils loaded from %s", nxai_communication_utils.__file__)
+
+    def _handle_sigterm(signum, frame):
+        logger.info("Received SIGTERM — exiting")
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, _handle_sigterm)
     try:
         engine = LogitsOcrEngine(
             expected_logits_shape=(9, 37),
