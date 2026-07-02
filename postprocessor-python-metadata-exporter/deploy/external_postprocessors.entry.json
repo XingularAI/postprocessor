@@ -1,0 +1,39 @@
+{
+    "externalPostprocessors": [
+        {
+            "Name": "Metadata Exporter",
+            "Command": "C:\\Windows\\System32\\config\\systemprofile\\AppData\\Local\\Network Optix\\Network Optix Media Server\\nx_ai_manager\\nxai_manager\\postprocessors\\postprocessor-python-metadata-exporter.exe",
+            "SocketPath": "C:\\Windows\\Temp\\metadata-exporter.sock",
+            "ReceiveInputTensor": true,
+            "ReceiveConfidenceData": true,
+            "NoResponse": true,
+            "Settings": [
+                {
+                    "type": "TextField",
+                    "name": "externalprocessor.metadata_exporter_backend_url",
+                    "caption": "Backend URL",
+                    "description": "Destination URL for events (HTTP POST).",
+                    "defaultValue": "http://127.0.0.1:8000/ingest"
+                },
+                {
+                    "type": "DoubleSpinBox",
+                    "name": "externalprocessor.metadata_exporter_min_confidence",
+                    "caption": "Min Confidence",
+                    "description": "Only send objects with confidence >= this value.",
+                    "defaultValue": 0.0,
+                    "minValue": 0.0,
+                    "maxValue": 1.0
+                },
+                {
+                    "type": "SpinBox",
+                    "name": "externalprocessor.metadata_exporter_heartbeat_seconds",
+                    "caption": "Heartbeat (seconds)",
+                    "description": "Send a periodic status event every N seconds; 0 = off.",
+                    "defaultValue": 30,
+                    "minValue": 0,
+                    "maxValue": 3600
+                }
+            ]
+        }
+    ]
+}

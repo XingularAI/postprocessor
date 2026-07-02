@@ -50,7 +50,7 @@ if(MSVC)
     link_libraries(ws2_32)
 endif()
 
-set(NUITKA_FLAGS "--onefile-tempdir-spec={TEMP}/onefile_{PROGRAM_BASE}")
+set(NUITKA_FLAGS "--onefile-tempdir-spec={TEMP}/onefile_{PID} --assume-yes-for-downloads")
 
 # Add Scailable C Utilities for all subprojects
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/nxai-utilities)
@@ -115,3 +115,6 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/preprocessor-python-tensor-example)
 
 # Add Clip Preprocessor Python project
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/preprocessor-python-clip-example)
+
+## Add Metadata Postprocessor Python project
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/postprocessor-python-metadata-exporter)

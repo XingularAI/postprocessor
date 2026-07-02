@@ -1,0 +1,5 @@
+nuitka
+msgpack
+requests
+pillow
+numpy
