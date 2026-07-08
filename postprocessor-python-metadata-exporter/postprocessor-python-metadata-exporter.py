@@ -28,29 +28,59 @@ except ImportError:
 
 # ---- configuration ----
 cfg = configparser.ConfigParser(); cfg.read(CONFIG_FILE)
-URL           = cfg.get("backend", "url",             fallback=os.environ.get("METADATA_EXPORTER_BACKEND_URL", "http://127.0.0.1:8000/ingest"))  # dev fallback; production via Settings UI
-API_KEY       = cfg.get("backend", "api_key",         fallback=os.environ.get("METADATA_EXPORTER_API_KEY", ""))
-SEND_SNAPSHOT = cfg.getboolean("backend", "send_snapshot",    fallback=True)   # must equal ReceiveInputTensor in the JSON
-JPEG_QUALITY  = cfg.getint("backend", "jpeg_quality",         fallback=80)
-CHANNEL_ORDER = cfg.get("backend", "channel_order",   fallback="RGB").upper()  # RGB or BGR
-SNAPSHOT_MAX  = cfg.getint("backend", "snapshot_max_px",      fallback=640)     # longest crop side in px; 0 = no resize
-HEARTBEAT_S   = cfg.getfloat("backend", "heartbeat_seconds",  fallback=30.0)    # dev fallback; production via Settings UI; 0 = off
-OBJECT_TTL_S  = cfg.getfloat("backend", "object_ttl_seconds", fallback=5.0)
-MIN_CONF      = cfg.getfloat("backend", "min_confidence",     fallback=0.0)     # dev fallback; production via Settings UI
-HTTP_TIMEOUT  = cfg.getfloat("backend", "http_timeout",       fallback=5.0)
-HTTP_RETRIES  = cfg.getint("backend", "http_retries",         fallback=2)
-QUEUE_MAX     = cfg.getint("backend", "queue_max",            fallback=500)
-LOG_LEVEL     = cfg.get("common", "debug_level",      fallback="INFO").upper()
+
+def _cfg(kind, section, key, fallback):
+    """Typed config read that falls back on a MISSING or MALFORMED value. A single bad .ini entry
+    (e.g. a stray inline comment, which configparser does NOT strip) must never crash the processor
+    at import — that would silently take down the whole NX AI pipeline for this camera."""
+    try:
+        if kind == "bool":  return cfg.getboolean(section, key, fallback=fallback)
+        if kind == "float": return cfg.getfloat(section, key, fallback=fallback)
+        if kind == "int":   return cfg.getint(section, key, fallback=fallback)
+        return cfg.get(section, key, fallback=fallback)
+    except (ValueError, TypeError):
+        return fallback
+
+URL           = cfg.get("backend", "url", fallback=os.environ.get("METADATA_EXPORTER_BACKEND_URL", "http://127.0.0.1:8000/ingest"))  # dev fallback; production via Settings UI
+API_KEY       = cfg.get("backend", "api_key", fallback=os.environ.get("METADATA_EXPORTER_API_KEY", ""))
+SEND_SNAPSHOT = _cfg("bool",  "backend", "send_snapshot",     True)   # must equal ReceiveInputTensor in the JSON
+JPEG_QUALITY  = _cfg("int",   "backend", "jpeg_quality",      80)
+CHANNEL_ORDER = cfg.get("backend", "channel_order", fallback="RGB").upper()  # RGB or BGR
+SNAPSHOT_MAX  = _cfg("int",   "backend", "snapshot_max_px",   640)    # longest crop side in px; 0 = no resize
+HEARTBEAT_S   = _cfg("float", "backend", "heartbeat_seconds", 30.0)   # dev fallback; production via Settings UI; 0 = off
+OBJECT_TTL_S  = _cfg("float", "backend", "object_ttl_seconds", 5.0)
+MIN_CONF      = _cfg("float", "backend", "min_confidence",    0.0)    # dev fallback; production via Settings UI
+HTTP_TIMEOUT  = _cfg("float", "backend", "http_timeout",      5.0)
+HTTP_RETRIES  = _cfg("int",   "backend", "http_retries",      2)
+QUEUE_MAX     = _cfg("int",   "backend", "queue_max",         500)
+LOG_LEVEL     = cfg.get("common", "debug_level", fallback="INFO").upper()
+
+# --- realtime tracking stream (heatmap / trajectories / live counts) ---
+SEND_TRACK    = _cfg("bool",  "backend", "send_track",        True)   # master enable for "track"
+TRACK_FPS     = _cfg("float", "backend", "track_fps",         5.0)    # max track events/sec PER device (0=off)
+TRACK_MAX_OBJ = _cfg("int",   "backend", "track_max_objects", 60)     # cap objects[] per track event
+# --- periodic scene background (heatmap / trajectory backdrop) ---
+SEND_SCENE    = _cfg("bool",  "backend", "send_scene",        True)   # ignored if send_snapshot=false
+SCENE_SECONDS = _cfg("float", "backend", "scene_seconds",     60.0)   # min seconds between scenes PER device (0=off)
+SCENE_MAX_PX  = _cfg("int",   "backend", "scene_max_px",      960)    # longest side of the downscaled scene JPEG
+SCENE_JPEG_Q  = _cfg("int",   "backend", "scene_jpeg_quality", 70)    # scene JPEG quality (separate from crop quality)
+# --- backpressure: reserve queue headroom for high-value detect/heartbeat ---
+QUEUE_RESERVE = _cfg("int",   "backend", "queue_reserve",     64)     # refuse track/scene when free slots <= this
+SCENE_MAX_B64 = _cfg("int",   "backend", "scene_max_b64_bytes", 350000)  # skip a scene whose base64 exceeds this
 
 # --- Settings UI (external_postprocessors.json -> "Settings"); NX sends values as STRINGS ---
 # Names must start with 'externalprocessor.'; the 'metadata_' prefix avoids clashing with other
 # processors' settings (NX sends ALL settings to ALL post-processors).
-S_URL  = "externalprocessor.metadata_exporter_backend_url"
-S_CONF = "externalprocessor.metadata_exporter_min_confidence"
-S_HB   = "externalprocessor.metadata_exporter_heartbeat_seconds"
+S_URL   = "externalprocessor.metadata_exporter_backend_url"
+S_CONF  = "externalprocessor.metadata_exporter_min_confidence"
+S_HB    = "externalprocessor.metadata_exporter_heartbeat_seconds"
+S_TRK   = "externalprocessor.metadata_exporter_send_track"
+S_TFPS  = "externalprocessor.metadata_exporter_track_fps"
+S_SCENE = "externalprocessor.metadata_exporter_scene_seconds"
 
-# Active runtime values: defaults from code, overridden each frame by the Settings UI (url, min_conf, heartbeat).
-RUNTIME = {"url": URL, "api_key": API_KEY, "min_conf": MIN_CONF, "heartbeat_s": HEARTBEAT_S}
+# Active runtime values: defaults from code, overridden each frame by the Settings UI.
+RUNTIME = {"url": URL, "api_key": API_KEY, "min_conf": MIN_CONF, "heartbeat_s": HEARTBEAT_S,
+           "send_track": SEND_TRACK, "track_fps": TRACK_FPS, "scene_seconds": SCENE_SECONDS}
 
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL, logging.INFO),
@@ -65,6 +95,8 @@ DEFAULT_SOCKET = os.path.join(tempfile.gettempdir(), "metadata-exporter.sock")
 # ---- shared state (across frames; one processor instance serves all cameras) ----
 _seen = {}            # (device_id, object_id) -> last_seen_ts   -> DETECT dedupe + TTL
 _last_hb = {}         # device_id -> last heartbeat ts
+_last_track = {}      # device_id -> last TRACK emit ts   (per-device sampler)
+_last_scene = {}      # device_id -> last SCENE emit ts   (per-device timer)
 _last_evict = [0.0]
 _shm = {"key": None, "obj": None}
 
@@ -123,6 +155,8 @@ def _setting(s, name, cast, default):
         return default
     v = s[name]
     try:
+        if cast is bool:                      # SwitchButton may arrive as native bool OR "true"/"1"
+            return v if isinstance(v, bool) else str(v).strip().lower() in ("true", "1", "yes", "on")
         if cast is float: return float(v)     # NX sends numbers as strings, e.g. "0.5"
         if cast is int:   return int(float(v))
         return str(v)
@@ -137,14 +171,18 @@ def apply_settings(obj):
     url = _setting(s, S_URL, str, RUNTIME["url"])
     if url:                                    # do not overwrite with an empty string
         RUNTIME["url"] = url
-    RUNTIME["min_conf"]    = _setting(s, S_CONF, float, RUNTIME["min_conf"])
-    RUNTIME["heartbeat_s"] = _setting(s, S_HB,   float, RUNTIME["heartbeat_s"])
+    RUNTIME["min_conf"]      = _setting(s, S_CONF,  float, RUNTIME["min_conf"])
+    RUNTIME["heartbeat_s"]   = _setting(s, S_HB,    float, RUNTIME["heartbeat_s"])
+    RUNTIME["send_track"]    = _setting(s, S_TRK,   bool,  RUNTIME["send_track"])
+    RUNTIME["track_fps"]     = _setting(s, S_TFPS,  float, RUNTIME["track_fps"])
+    RUNTIME["scene_seconds"] = _setting(s, S_SCENE, float, RUNTIME["scene_seconds"])
 
 def evict(now):
     if now - _last_evict[0] < OBJECT_TTL_S:
         return
     _last_evict[0] = now
-    for k in [k for k, t in _seen.items() if now - t > OBJECT_TTL_S]:
+    # _seen values are (first_seen_us, last_seen_sec); evict on the last-seen element.
+    for k in [k for k, v in _seen.items() if now - v[1] > OBJECT_TTL_S]:
         _seen.pop(k, None)
 
 # =========================================================================
@@ -152,16 +190,30 @@ def evict(now):
 # =========================================================================
 _q = queue.Queue(maxsize=QUEUE_MAX)
 
-def enqueue(payload):
-    job = (RUNTIME["url"], RUNTIME["api_key"], payload)   # capture the current url/api_key
+def enqueue_kind(payload, kind):
+    """Class-aware backpressure. detect/heartbeat are high value (kept via drop-oldest);
+    the high-rate track/scene are low value (refused, never evict) so a burst can never
+    crowd out a new-object snapshot. QUEUE_RESERVE slots are usable only by detect/heartbeat."""
+    job = (RUNTIME["url"], RUNTIME["api_key"], payload, kind)   # capture the current url/api_key
+    if kind in ("track", "scene"):
+        if _q.qsize() >= QUEUE_MAX - QUEUE_RESERVE:   # keep headroom for detect/heartbeat
+            log.debug("queue near full, dropping %s", kind)
+            return
+        try: _q.put_nowait(job)
+        except queue.Full: log.debug("queue full, dropping %s", kind)
+        return
+    # High-priority: keep the existing drop-oldest-to-make-room behavior.
     try:
         _q.put_nowait(job)
-    except queue.Full:                 # backpressure: drop the oldest, keep the newest
-        try: _q.get_nowait()
+    except queue.Full:
+        try: _q.get_nowait(); _q.task_done()   # balance task_done bookkeeping
         except queue.Empty: pass
         try: _q.put_nowait(job)
         except queue.Full: pass
-        log.warning("queue full, dropping oldest event")
+        log.warning("queue full, dropping oldest to admit %s", kind)
+
+def enqueue(payload):                  # back-compat shim: kind inferred from the payload type
+    enqueue_kind(payload, payload.get("type", "detect"))
 
 def uploader():
     sess = requests.Session() if _HTTP == "requests" else None
@@ -170,7 +222,7 @@ def uploader():
         if job is None:
             break
         try:
-            url, api_key, payload = job
+            url, api_key, payload, kind = job
             if not url:
                 log.warning("backend URL is empty, event skipped (%s)", payload.get("event_id"))
                 continue
@@ -179,14 +231,15 @@ def uploader():
                        "X-Event-Id": str(payload.get("event_id", ""))}
             if api_key:
                 headers["Authorization"] = "Bearer " + api_key
+            timeout = HTTP_TIMEOUT * 3 if kind == "scene" else HTTP_TIMEOUT   # scene bodies are larger
             for attempt in range(HTTP_RETRIES + 1):
                 try:
                     if _HTTP == "requests":
-                        r = sess.post(url, data=body, headers=headers, timeout=HTTP_TIMEOUT)
+                        r = sess.post(url, data=body, headers=headers, timeout=timeout)
                         r.raise_for_status()
                     else:
                         req = urllib.request.Request(url, data=body, headers=headers, method="POST")
-                        urllib.request.urlopen(req, timeout=HTTP_TIMEOUT).close()
+                        urllib.request.urlopen(req, timeout=timeout).close()
                     break
                 except Exception as e:            # noqa: BLE001
                     if attempt < HTTP_RETRIES:
@@ -199,8 +252,11 @@ def uploader():
 # =========================================================================
 # Event builders (only 2: detect & heartbeat). Times are in MICROSECONDS (matching NX Timestamp).
 # =========================================================================
-def emit_detect(obj, now_us, dev, cls, oid, bbox, conf, attrs, snap, fw, fh):
-    p = {"event_id": f"{dev}:{oid}:detect", "type": "detect",
+def emit_detect(obj, now_us, dev, cls, oid, bbox, conf, attrs, snap, fw, fh, first_us):
+    # event_id is scoped to this APPEARANCE (first-seen µs), so if a tracker recycles an
+    # ObjectID and the object re-enters after the TTL gap, the backend records it as a new
+    # detection instead of permanently deduping it against the first appearance.
+    p = {"event_id": f"{dev}:{oid}:{first_us}:detect", "type": "detect",
          "device_id": dev, "device_name": obj.get("DeviceName"),
          "timestamp": obj.get("Timestamp"), "sent_at": now_us,
          "object": {"id": oid, "class": cls, "confidence": conf,
@@ -215,6 +271,64 @@ def emit_heartbeat(obj, now_us, dev):
              "device_id": dev, "device_name": obj.get("DeviceName"),
              "sent_at": now_us, "counts": compute_counts(obj)})
 
+def build_track_objects(obj, dev, min_conf, cap):
+    """All current objects this frame (NON-deduped) -> [{id,class,confidence,bbox_xyxy}].
+    Mirrors the detect loop's parsing but without dedupe/TTL. Keeps null-id objects so the
+    heatmap / live counts still work when object tracking is disabled (trajectories need ids)."""
+    out = []
+    for cls, coords in (obj.get("BBoxes_xyxy", {}) or {}).items():
+        meta  = (obj.get("ObjectsMetaData", {}) or {}).get(cls, {}) or {}
+        ids   = meta.get("ObjectIDs") or []
+        confs = meta.get("Confidences") or []
+        for i in range(len(coords) // 4):
+            try:
+                conf = float(confs[i]) if i < len(confs) else None
+                if conf is not None and conf < min_conf:
+                    continue
+                oid_raw = ids[i] if i < len(ids) else None
+                oid = ((oid_raw.hex() if isinstance(oid_raw, (bytes, bytearray)) else str(oid_raw))
+                       if oid_raw else None)
+                bbox = [float(x) for x in coords[i * 4:i * 4 + 4]]
+            except (TypeError, ValueError):
+                continue                              # skip a malformed object, keep the rest
+            out.append({"id": oid, "class": cls, "confidence": conf, "bbox_xyxy": bbox})
+    if len(out) > cap:                               # keep the most confident objects
+        out.sort(key=lambda o: (o["confidence"] if o["confidence"] is not None else -1.0), reverse=True)
+        out = out[:cap]
+    return out
+
+def emit_track(obj, now_us, dev, fw, fh, objects):
+    if not objects:                                  # skip empty frames (heartbeat covers liveness)
+        return
+    enqueue_kind({"event_id": f"{dev}:trk:{now_us}", "type": "track",
+                  "device_id": dev, "device_name": obj.get("DeviceName"),
+                  "timestamp": obj.get("Timestamp"), "sent_at": now_us,
+                  "frame": {"width": fw, "height": fh}, "objects": objects}, "track")
+
+def encode_scene(img, max_px, quality):
+    """Downscaled full-frame JPEG (base64). Operates on a COPY so the shared frame_img used for
+    per-object bbox crops stays full-resolution. -> (b64, sw, sh) | (None, 0, 0)."""
+    try:
+        sc = img.copy()
+        if max_px > 0 and max(sc.width, sc.height) > max_px:
+            sc.thumbnail((max_px, max_px))
+        buf = io.BytesIO(); sc.save(buf, "JPEG", quality=quality)
+        return base64.b64encode(buf.getvalue()).decode("ascii"), sc.width, sc.height
+    except Exception as e:            # noqa: BLE001
+        log.warning("encode_scene failed: %s", e)
+        return None, 0, 0
+
+def emit_scene(obj, now_us, dev, fw, fh, b64, sw, sh):
+    if len(b64) > SCENE_MAX_B64:                     # oversize guard (protect MAX_BODY + the queue)
+        log.warning("scene too large (%d b64 bytes), skipped for %s", len(b64), dev)
+        return
+    window = now_us // int(max(1.0, SCENE_SECONDS) * 1_000_000)
+    enqueue_kind({"event_id": f"{dev}:scene:{window}", "type": "scene",
+                  "device_id": dev, "device_name": obj.get("DeviceName"),
+                  "timestamp": obj.get("Timestamp"), "sent_at": now_us,
+                  "frame": {"width": fw, "height": fh},
+                  "scene": {"width": sw, "height": sh, "jpeg": b64}}, "scene")
+
 # =========================================================================
 # Main loop
 # =========================================================================
@@ -222,7 +336,9 @@ def handle_frame(obj, connection):
     now = time.time()
     now_us = int(now * 1_000_000)
     apply_settings(obj)                  # pick up the latest url, min_confidence & heartbeat from the Settings UI
-    dev = obj.get("DeviceID", "") or ""
+    # Fall back to DeviceName so two cameras on one processor don't collapse into one "" namespace
+    # (which would cross-dedupe their objects and race their per-device timers).
+    dev = str(obj.get("DeviceID") or obj.get("DeviceName") or "")
     fw = obj.get("Width") or 0
     fh = obj.get("Height") or 0
 
@@ -240,6 +356,18 @@ def handle_frame(obj, connection):
     evict(now)
     frame_img = None                     # PIL image decoded lazily (only when there is a DETECT + snapshot)
 
+    # SCENE: periodic downscaled full frame (heatmap/trajectory backdrop). Decode once here and
+    # encode a COPY, BEFORE the per-object crop loop, so bbox crops keep the full-res frame_img.
+    if SEND_SCENE and SEND_SNAPSHOT and RUNTIME["scene_seconds"] > 0 \
+       and now - _last_scene.get(dev, 0.0) >= RUNTIME["scene_seconds"]:
+        if frame_img is None:
+            frame_img = decode_frame(header)
+        if frame_img is not None:
+            b64, sw, sh = encode_scene(frame_img, SCENE_MAX_PX, SCENE_JPEG_Q)
+            if b64:
+                _last_scene[dev] = now       # set only on success so a failed decode retries next frame
+                emit_scene(obj, now_us, dev, fw, fh, b64, sw, sh)
+
     for cls, coords in (obj.get("BBoxes_xyxy", {}) or {}).items():
         meta  = (obj.get("ObjectsMetaData", {}) or {}).get(cls, {}) or {}
         ids   = meta.get("ObjectIDs") or []
@@ -247,19 +375,24 @@ def handle_frame(obj, connection):
         akeys = meta.get("AttributeKeys") or []
         avals = meta.get("AttributeValues") or []
         for i in range(len(coords) // 4):
-            conf = float(confs[i]) if i < len(confs) else None
-            if conf is not None and conf < RUNTIME["min_conf"]:
-                continue
-            oid_raw = ids[i] if i < len(ids) else None
-            if not oid_raw:                       # no tracker ID -> cannot dedupe -> skip
-                continue                          # (enable object tracking in the pipeline to emit DETECT)
-            oid = oid_raw.hex() if isinstance(oid_raw, (bytes, bytearray)) else str(oid_raw)
-            key = (dev, oid)
-            first = key not in _seen
-            _seen[key] = now
-            if not first:
-                continue                          # already seen -> dedupe (not a new object)
-            bbox = [float(x) for x in coords[i * 4:i * 4 + 4]]
+            try:
+                conf = float(confs[i]) if i < len(confs) else None
+                if conf is not None and conf < RUNTIME["min_conf"]:
+                    continue
+                oid_raw = ids[i] if i < len(ids) else None
+                if not oid_raw:                       # no tracker ID -> cannot dedupe -> skip
+                    continue                          # (enable object tracking in the pipeline to emit DETECT)
+                oid = oid_raw.hex() if isinstance(oid_raw, (bytes, bytearray)) else str(oid_raw)
+                key = (dev, oid)
+                prev = _seen.get(key)                 # (first_seen_us, last_seen_sec) or None
+                first = prev is None
+                first_us = now_us if first else prev[0]
+                _seen[key] = (first_us, now)
+                if not first:
+                    continue                          # already seen this appearance -> dedupe
+                bbox = [float(x) for x in coords[i * 4:i * 4 + 4]]
+            except (TypeError, ValueError):
+                continue                              # malformed object -> skip it, keep the frame alive
             attrs = {}
             if i < len(akeys) and i < len(avals):
                 try: attrs = {str(k): str(v) for k, v in zip(akeys[i], avals[i])}
@@ -270,7 +403,14 @@ def handle_frame(obj, connection):
                     frame_img = decode_frame(header)
                 if frame_img is not None:
                     snap = crop_encode(frame_img, bbox, fw, fh)
-            emit_detect(obj, now_us, dev, cls, oid, bbox, conf, attrs, snap, fw, fh)
+            emit_detect(obj, now_us, dev, cls, oid, bbox, conf, attrs, snap, fw, fh, first_us)
+
+    # TRACK: throttled, non-deduped per-frame batch (heatmap / trajectories / live counts).
+    tfps = RUNTIME["track_fps"]
+    if RUNTIME["send_track"] and tfps > 0 and now - _last_track.get(dev, 0.0) >= 1.0 / tfps:
+        _last_track[dev] = now
+        emit_track(obj, now_us, dev, fw, fh,
+                   build_track_objects(obj, dev, RUNTIME["min_conf"], TRACK_MAX_OBJ))
 
     hb = RUNTIME["heartbeat_s"]
     if hb > 0 and now - _last_hb.get(dev, 0.0) >= hb:

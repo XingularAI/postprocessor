@@ -32,6 +32,31 @@
                     "defaultValue": 30,
                     "minValue": 0,
                     "maxValue": 3600
+                },
+                {
+                    "type": "SwitchButton",
+                    "name": "externalprocessor.metadata_exporter_send_track",
+                    "caption": "Stream tracking",
+                    "description": "Send per-frame object positions (heatmap / trajectories / live counts).",
+                    "defaultValue": true
+                },
+                {
+                    "type": "DoubleSpinBox",
+                    "name": "externalprocessor.metadata_exporter_track_fps",
+                    "caption": "Tracking rate (fps)",
+                    "description": "Max tracking samples per second per camera; 0 = off.",
+                    "defaultValue": 5.0,
+                    "minValue": 0.0,
+                    "maxValue": 15.0
+                },
+                {
+                    "type": "SpinBox",
+                    "name": "externalprocessor.metadata_exporter_scene_seconds",
+                    "caption": "Scene refresh (seconds)",
+                    "description": "Send a downscaled full-frame backdrop every N seconds; 0 = off.",
+                    "defaultValue": 60,
+                    "minValue": 0,
+                    "maxValue": 3600
                 }
             ]
         }

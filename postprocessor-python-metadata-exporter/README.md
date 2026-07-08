@@ -26,16 +26,24 @@ enable **object tracking**. Done.
 
 ## What it does
 
-Event-driven; sends only two kinds of events over HTTP POST:
+Event-driven; sends four kinds of events over HTTP POST:
 
 - **`detect`** — a *new* object appeared. Deduplicated by the tracker's `ObjectID`
   (once per object, not every frame), with a JPEG **snapshot cropped to the object's bbox**.
 - **`heartbeat`** — periodic status (`counts` per class) so the backend knows the camera is alive.
+- **`track`** — a throttled, **non-deduped** batch of *all* current objects' positions per sampled
+  frame (default 5 fps per camera, no snapshot — kept small). This is what powers the dashboard's
+  **heatmap**, **object trajectories** and live counts. Disabling dedupe here (rather than on
+  `detect`) gives rich movement insight without flooding the backend with per-frame snapshots.
+- **`scene`** — a periodic **downscaled full-frame JPEG** per camera (default every 60 s), used as
+  the backdrop the heatmap / trajectories are drawn over. Requires `send_snapshot = true`.
 
-Highlights: dedupe by tracker ID (TTL-based), cropped snapshots, immediate (no-batch)
-sending from a background thread with retry + backoff, and UI-configurable backend URL /
-min confidence / heartbeat. `detect` requires **object tracking** in the pipeline (so
-`ObjectID` exists); without it, only `heartbeat` is sent.
+Highlights: dedupe by tracker ID (TTL-based), cropped snapshots, a per-frame tracking stream and
+periodic scene backdrops, **class-aware backpressure** (a burst of `track`/`scene` can never evict a
+high-value `detect`), immediate (no-batch) sending from a background thread with retry + backoff, and
+UI-configurable backend URL / min confidence / heartbeat / tracking / scene. `detect` and object
+trajectories require **object tracking** in the pipeline (so `ObjectID` exists); without it you still
+get `heartbeat`, `scene`, and a heatmap (positions without stable IDs).
 
 ## Files
 
@@ -99,11 +107,17 @@ and code fallbacks apply.
 | `backend_url` | **NX UI** (prod) / code fallback (dev) | `http://127.0.0.1:8000/ingest` |
 | `min_confidence` | **NX UI** (prod) / `0.0` (dev) | 0.0–1.0 |
 | `heartbeat_seconds` | **NX UI** (prod) / `30` (dev) | 0 = off |
+| `send_track` | **NX UI** (prod) / `true` (dev) | enable the per-frame tracking stream (heatmap/trajectories) |
+| `track_fps` | **NX UI** (prod) / `5.0` (dev) | max `track` events/sec **per camera**; 0 = off |
+| `scene_seconds` | **NX UI** (prod) / `60` (dev) | send a scene backdrop every N s; 0 = off |
 | `api_key` | `.ini` | sent as `Authorization: Bearer ...` (optional) |
 | `send_snapshot` | `.ini` | must equal `ReceiveInputTensor` |
-| `jpeg_quality`, `channel_order`, `snapshot_max_px` | `.ini` | snapshot encoding |
-| `object_ttl_seconds` | `.ini` | dedupe TTL |
+| `jpeg_quality`, `channel_order`, `snapshot_max_px` | `.ini` | bbox-crop snapshot encoding |
+| `track_max_objects` | `.ini` | cap objects per `track` event (keeps the most confident) |
+| `send_scene`, `scene_max_px`, `scene_jpeg_quality` | `.ini` | scene backdrop encoding |
+| `object_ttl_seconds` | `.ini` | `detect` dedupe TTL |
 | `http_timeout`, `http_retries`, `queue_max` | `.ini` | resilience |
+| `queue_reserve`, `scene_max_b64_bytes` | `.ini` | backpressure: reserve queue slots for `detect`/`heartbeat`; skip oversize scenes |
 | `debug_level` | `.ini` `[common]` | `INFO` / `DEBUG` / ... |
 
 Changing a UI value applies live (next frame). Changing the `.ini` requires a service restart.
@@ -136,6 +150,29 @@ Both events carry an `event_id` (idempotency key). Times are **microseconds sinc
   "device_name": "Front Gate",
   "sent_at": 1782901536170000,
   "counts": { "person": 2, "car": 1 }
+}
+
+// track — non-deduped batch of current object positions (throttled to track_fps)
+{
+  "event_id": "<device>:trk:<sent_at_us>",
+  "type": "track",
+  "device_id": "cam-01", "device_name": "Front Gate",
+  "timestamp": 1782901536165000, "sent_at": 1782901536170000,
+  "frame": { "width": 1920, "height": 1080 },
+  "objects": [
+    { "id": "a1b2c3...", "class": "person", "confidence": 0.90,
+      "bbox_xyxy": [412.0, 200.0, 680.0, 430.0] }   // id may be null when tracking is off
+  ]
+}
+
+// scene — periodic downscaled full frame (heatmap / trajectory backdrop)
+{
+  "event_id": "<device>:scene:<window>",
+  "type": "scene",
+  "device_id": "cam-01", "device_name": "Front Gate",
+  "timestamp": 1782901536165000, "sent_at": 1782901536170000,
+  "frame": { "width": 1920, "height": 1080 },
+  "scene": { "width": 960, "height": 540, "jpeg": "<base64 JPEG string>" }
 }
 ```
 

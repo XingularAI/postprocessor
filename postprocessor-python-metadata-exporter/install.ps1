@@ -106,9 +106,28 @@ $svc = Get-Service -ErrorAction SilentlyContinue |
        Where-Object { $_.DisplayName -like "*Network Optix*Media Server*" -and $_.DisplayName -notlike "*MetaVMS*" } |
        Select-Object -First 1
 
-# --- stop service (avoid locking a running exe), then install ---
-if ($svc) { Write-Host "Stopping service '$($svc.DisplayName)'..."; Stop-Service $svc.Name -Force -ErrorAction SilentlyContinue }
+# --- stop service + kill any running processor instance, then install ---
+# Windows cannot overwrite a running .exe. Stopping the service is not enough: the AI Manager
+# runs the post-processor as a CHILD process that can outlive (be orphaned by) the service stop
+# and keep the exe locked -> `cmake --install` fails with "Permission denied". So: stop the
+# service, wait for it to actually stop, kill any lingering processor process, and wait until the
+# target binary is unlocked before installing.
+if ($svc) {
+    Write-Host "Stopping service '$($svc.DisplayName)'..."
+    Stop-Service $svc.Name -Force -ErrorAction SilentlyContinue
+    for ($i = 0; $i -lt 40 -and (Get-Service $svc.Name -ErrorAction SilentlyContinue).Status -ne 'Stopped'; $i++) { Start-Sleep -Milliseconds 500 }
+}
+Get-Process -Name $PROC -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 Remove-Item $SocketPath -Force -ErrorAction SilentlyContinue
+$targetExe = Join-Path $ppDir "$PROC.exe"
+if (Test-Path $targetExe) {
+    $unlocked = $false
+    for ($i = 0; $i -lt 20; $i++) {
+        try { $fs = [System.IO.File]::Open($targetExe, 'Open', 'ReadWrite', 'None'); $fs.Close(); $unlocked = $true; break }
+        catch { Start-Sleep -Milliseconds 500 }
+    }
+    if (-not $unlocked) { Write-Warning "Target exe still locked after 10s; install may fail. Close any running '$PROC' process." }
+}
 
 Write-Host "Installing..." -ForegroundColor Cyan
 cmake --install $build --component $PROC
@@ -130,7 +149,10 @@ $entry = [ordered]@{
     Settings              = @(
         [ordered]@{ type="TextField";     name="externalprocessor.metadata_exporter_backend_url";      caption="Backend URL";         description="Destination URL for events (HTTP POST).";           defaultValue=$BackendUrl },
         [ordered]@{ type="DoubleSpinBox"; name="externalprocessor.metadata_exporter_min_confidence";   caption="Min Confidence";      description="Only send objects with confidence >= this value.";  defaultValue=0.0; minValue=0.0; maxValue=1.0 },
-        [ordered]@{ type="SpinBox";       name="externalprocessor.metadata_exporter_heartbeat_seconds"; caption="Heartbeat (seconds)"; description="Send a periodic status event every N seconds; 0 = off."; defaultValue=30; minValue=0; maxValue=3600 }
+        [ordered]@{ type="SpinBox";       name="externalprocessor.metadata_exporter_heartbeat_seconds"; caption="Heartbeat (seconds)"; description="Send a periodic status event every N seconds; 0 = off."; defaultValue=30; minValue=0; maxValue=3600 },
+        [ordered]@{ type="SwitchButton";  name="externalprocessor.metadata_exporter_send_track";        caption="Stream tracking";     description="Send per-frame object positions (heatmap / trajectories / live counts)."; defaultValue=$true },
+        [ordered]@{ type="DoubleSpinBox"; name="externalprocessor.metadata_exporter_track_fps";         caption="Tracking rate (fps)"; description="Max tracking samples per second per camera; 0 = off."; defaultValue=5.0; minValue=0.0; maxValue=15.0 },
+        [ordered]@{ type="SpinBox";       name="externalprocessor.metadata_exporter_scene_seconds";     caption="Scene refresh (seconds)"; description="Send a downscaled full-frame backdrop every N seconds; 0 = off."; defaultValue=60; minValue=0; maxValue=3600 }
     )
 }
 
