@@ -92,7 +92,10 @@ $entry = [ordered]@{
     Settings              = @(
         [ordered]@{ type="TextField";     name="externalprocessor.metadata_exporter_backend_url";      caption="Backend URL";         description="Destination URL for events (HTTP POST).";           defaultValue=$BackendUrl },
         [ordered]@{ type="DoubleSpinBox"; name="externalprocessor.metadata_exporter_min_confidence";   caption="Min Confidence";      description="Only send objects with confidence >= this value.";  defaultValue=0.0; minValue=0.0; maxValue=1.0 },
-        [ordered]@{ type="SpinBox";       name="externalprocessor.metadata_exporter_heartbeat_seconds"; caption="Heartbeat (seconds)"; description="Send a periodic status event every N seconds; 0 = off."; defaultValue=30; minValue=0; maxValue=3600 }
+        [ordered]@{ type="SpinBox";       name="externalprocessor.metadata_exporter_heartbeat_seconds"; caption="Heartbeat (seconds)"; description="Send a periodic status event every N seconds; 0 = off."; defaultValue=30; minValue=0; maxValue=3600 },
+        [ordered]@{ type="SwitchButton";  name="externalprocessor.metadata_exporter_send_track";        caption="Stream tracking";     description="Send per-frame object positions (heatmap / trajectories / live counts)."; defaultValue=$true },
+        [ordered]@{ type="DoubleSpinBox"; name="externalprocessor.metadata_exporter_track_fps";         caption="Tracking rate (fps)"; description="Max tracking samples per second per camera; 0 = off."; defaultValue=5.0; minValue=0.0; maxValue=15.0 },
+        [ordered]@{ type="SpinBox";       name="externalprocessor.metadata_exporter_scene_seconds";     caption="Scene refresh (seconds)"; description="Send a downscaled full-frame backdrop every N seconds; 0 = off."; defaultValue=60; minValue=0; maxValue=3600 }
     )
 }
 
